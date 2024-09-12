@@ -32,25 +32,33 @@
 //! "#).unwrap();
 //! ```
 
-#![deny(missing_docs)]
+// #![deny(missing_docs)]
 
-mod bindings;
+extern crate core;
+
+pub mod bindings;
 mod callback;
 pub mod console;
 mod value;
 
 #[cfg(test)]
 mod tests;
+pub mod loader;
 
 use std::{convert::TryFrom, error, fmt};
+use std::any::Any;
+use libquickjs_sys::{JS_EVAL_TYPE_GLOBAL, JS_EVAL_TYPE_MODULE};
+use loader::JsModuleLoader;
 
 pub use self::{
     callback::{Arguments, Callback},
     value::*,
 };
 
+pub use libquickjs_sys;
+
 /// Error on Javascript execution.
-#[derive(PartialEq, Debug)]
+#[derive(Debug)]
 pub enum ExecutionError {
     /// Code to be executed contained zero-bytes.
     InputWithZeroBytes,
@@ -121,6 +129,7 @@ impl error::Error for ContextError {}
 pub struct ContextBuilder {
     memory_limit: Option<usize>,
     console_backend: Option<Box<dyn console::ConsoleBackend>>,
+    module_loader: Option<Box<dyn JsModuleLoader>>,
 }
 
 impl ContextBuilder {
@@ -128,6 +137,7 @@ impl ContextBuilder {
         Self {
             memory_limit: None,
             console_backend: None,
+            module_loader: None,
         }
     }
 
@@ -156,11 +166,23 @@ impl ContextBuilder {
         self
     }
 
+    /// Set js module loader
+    pub fn module_loader<L>(mut self, loader: L) -> Self
+    where
+        L: JsModuleLoader,
+    {
+        self.module_loader = Some(Box::new(loader));
+        self
+    }
+
     /// Finalize the builder and build a JS Context.
     pub fn build(self) -> Result<Context, ContextError> {
-        let wrapper = bindings::ContextWrapper::new(self.memory_limit)?;
+        let mut wrapper = bindings::ContextWrapper::new(self.memory_limit)?;
         if let Some(be) = self.console_backend {
             wrapper.set_console(be).map_err(ContextError::Execution)?;
+        }
+        if let Some(ml) = self.module_loader {
+            wrapper.set_module_loader(ml);
         }
         Ok(Context::from_wrapper(wrapper))
     }
@@ -240,7 +262,14 @@ impl Context {
     /// );
     /// ```
     pub fn eval(&self, code: &str) -> Result<JsValue, ExecutionError> {
-        let value_raw = self.wrapper.eval(code)?;
+        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_GLOBAL)?;
+        let value = value_raw.to_value()?;
+        Ok(value)
+    }
+
+    /// Eval as module
+    pub fn eval_module(&self, code: &str) -> Result<JsValue, ExecutionError> {
+        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_MODULE)?;
         let value = value_raw.to_value()?;
         Ok(value)
     }
@@ -275,7 +304,7 @@ impl Context {
         R: TryFrom<JsValue>,
         R::Error: Into<ValueError>,
     {
-        let value_raw = self.wrapper.eval(code)?;
+        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_GLOBAL)?;
         let value = value_raw.to_value()?;
         let ret = R::try_from(value).map_err(|e| e.into())?;
         Ok(ret)
@@ -340,6 +369,21 @@ impl Context {
         Ok(v)
     }
 
+    /// Call a js function
+    pub fn call_js_function(
+        &self,
+        function: impl Into<JsValue>,
+        args: impl IntoIterator<Item = impl Into<JsValue>>,
+    ) -> Result<JsValue, ExecutionError> {
+        let qargs = args
+            .into_iter()
+            .map(|arg| self.wrapper.serialize_value(arg.into()))
+            .collect::<Result<Vec<_>, _>>()?;
+        let func = self.wrapper.serialize_value(function.into())?.try_into_function()?;
+        let v = self.wrapper.call_function(func, qargs)?.to_value()?;
+        Ok(v)
+    }
+
     /// Add a global JS function that is backed by a Rust function or closure.
     ///
     /// The callback must satisfy several requirements:
@@ -373,4 +417,14 @@ impl Context {
     ) -> Result<(), ExecutionError> {
         self.wrapper.add_callback(name, callback)
     }
+    
+    pub fn execute_pending_job(&self) -> Result<bool, ExecutionError> {
+        self.wrapper.execute_pending_job()
+    }
+
+    /// Execute module
+    pub fn execute_module(&self, module_name: &str) -> Result<(), ExecutionError> {
+        self.wrapper.execute_module(module_name)
+    }
+
 }

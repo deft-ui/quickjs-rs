@@ -1,0 +1,3 @@
+[submodule "libquickjs-sys/quickjs"]
+	path = libquickjs-sys/quickjs
+	url = git@github.com:kasonyang/quickjs.git

@@ -1,25 +1,24 @@
 mod compile;
-mod convert;
+//TODO no pub?
+pub mod convert;
 mod droppable_value;
-mod value;
+//TODO no pub?
+pub mod value;
 
-use std::{
-    ffi::CString,
-    os::raw::{c_int, c_void},
-    sync::Mutex,
-};
+use std::{ffi::CString, os::raw::{c_int, c_void}, sync::Mutex};
+use std::any::Any;
+use std::cell::Cell;
+use std::ptr::{null_mut};
 
 use libquickjs_sys as q;
+use libquickjs_sys::{JS_EVAL_TYPE_MODULE, js_std_dump_error, js_std_promise_rejection_tracker, JSClassID};
 
-use crate::{
-    callback::{Arguments, Callback},
-    console::ConsoleBackend,
-    ContextError, ExecutionError, JsValue, ValueError,
-};
+use crate::{callback::{Arguments, Callback}, console::ConsoleBackend, ContextError, ExecutionError, JsValue, ResourceValue, ValueError};
 
 use value::{JsFunction, OwnedJsObject};
 
 pub use value::{JsCompiledFunction, OwnedJsValue};
+use crate::loader::{quickjs_rs_module_loader, JsModuleLoader};
 
 // JS_TAG_* constants from quickjs.
 // For some reason bindgen does not pick them up.
@@ -32,12 +31,49 @@ const TAG_INT: i64 = 0;
 const TAG_BOOL: i64 = 1;
 const TAG_NULL: i64 = 2;
 const TAG_UNDEFINED: i64 = 3;
-const TAG_EXCEPTION: i64 = 6;
+pub const TAG_EXCEPTION: i64 = 6;
 const TAG_FLOAT64: i64 = 7;
 
 /// Helper for creating CStrings.
-fn make_cstring(value: impl Into<Vec<u8>>) -> Result<CString, ValueError> {
+pub fn make_cstring(value: impl Into<Vec<u8>>) -> Result<CString, ValueError> {
     CString::new(value).map_err(ValueError::StringWithZeroBytes)
+}
+
+pub struct ClassId {
+    id: Cell<JSClassID>,
+}
+
+pub struct ResourceObject {
+    pub data: ResourceValue,
+}
+
+unsafe impl Send for ClassId {}
+unsafe impl Sync for ClassId {}
+
+impl ClassId {
+    pub const fn new() -> Self {
+        ClassId {
+            id: Cell::new(0)
+        }
+    }
+}
+
+trait JsClass {
+    const NAME: &'static str;
+
+    fn class_id() -> &'static ClassId;
+
+}
+
+struct Resource;
+
+impl JsClass for Resource {
+    const NAME: &'static str = "Resource";
+
+    fn class_id() -> &'static ClassId {
+        static MY_CLASS_ID: ClassId = ClassId::new();
+        &MY_CLASS_ID
+    }
 }
 
 type WrappedCallback = dyn Fn(c_int, *mut q::JSValue) -> q::JSValue;
@@ -340,6 +376,7 @@ pub struct ContextWrapper {
     /// the closure.
     // A Mutex is used over a RefCell because it needs to be unwind-safe.
     callbacks: Mutex<Vec<(Box<WrappedCallback>, Box<q::JSValue>)>>,
+    module_loader: Option<*mut Box<dyn JsModuleLoader>>,
 }
 
 impl Drop for ContextWrapper {
@@ -366,6 +403,11 @@ impl ContextWrapper {
             }
         }
 
+        unsafe  {
+            //js_std_set_worker_new_context_func(JS_NewCustomContext);
+            //js_std_init_handlers(runtime);
+        }
+
         let context = unsafe { q::JS_NewContext(runtime) };
         if context.is_null() {
             unsafe {
@@ -374,15 +416,30 @@ impl ContextWrapper {
             return Err(ContextError::ContextCreationFailed);
         }
 
+        unsafe {
+            //TODO remove
+            q::JS_SetHostPromiseRejectionTracker(runtime, Some(js_std_promise_rejection_tracker), null_mut());
+        }
+
         // Initialize the promise resolver helper code.
         // This code is needed by Self::resolve_value
         let wrapper = Self {
             runtime,
             context,
             callbacks: Mutex::new(Vec::new()),
+            module_loader: None,
         };
 
         Ok(wrapper)
+    }
+
+    pub fn set_module_loader(&mut self, module_loader: Box<dyn JsModuleLoader>) {
+        let module_loader= Box::new(module_loader);
+        unsafe {
+            let module_loader = Box::into_raw(module_loader);
+            self.module_loader = Some(module_loader);
+            q::JS_SetModuleLoaderFunc(self.runtime, None, Some(quickjs_rs_module_loader), module_loader as *mut c_void);
+        }
     }
 
     // See console standard: https://console.spec.whatwg.org
@@ -410,31 +467,6 @@ impl ContextWrapper {
                 }
             }
         })?;
-
-        self.eval(
-            r#"
-            globalThis.console = {
-                trace: (...args) => {
-                    globalThis.__console_write("trace", ...args);
-                },
-                debug: (...args) => {
-                    globalThis.__console_write("debug", ...args);
-                },
-                log: (...args) => {
-                    globalThis.__console_write("log", ...args);
-                },
-                info: (...args) => {
-                    globalThis.__console_write("info", ...args);
-                },
-                warn: (...args) => {
-                    globalThis.__console_write("warn", ...args);
-                },
-                error: (...args) => {
-                    globalThis.__console_write("error", ...args);
-                },
-            };
-        "#,
-        )?;
 
         Ok(())
     }
@@ -516,82 +548,24 @@ impl ContextWrapper {
         value: OwnedJsValue<'a>,
     ) -> Result<OwnedJsValue<'a>, ExecutionError> {
         if value.is_exception() {
+            unsafe {
+                //TODO remove
+                js_std_dump_error(self.context);
+            }
             let err = self
                 .get_exception()
                 .unwrap_or_else(|| ExecutionError::Exception("Unknown exception".into()));
             Err(err)
         } else if value.is_object() {
             let obj = value.try_into_object()?;
-            if obj.is_promise()? {
-                self.eval(
-                    r#"
-                    // Values:
-                    //   - undefined: promise not finished
-                    //   - false: error ocurred, __promiseError is set.
-                    //   - true: finished, __promiseSuccess is set.
-                    var __promiseResult = 0;
-                    var __promiseValue = 0;
-
-                    var __resolvePromise = function(p) {
-                        p
-                            .then(value => {
-                                __promiseResult = true;
-                                __promiseValue = value;
-                            })
-                            .catch(e => {
-                                __promiseResult = false;
-                                __promiseValue = e;
-                            });
-                    }
-                "#,
-                )?;
-
-                let global = self.global()?;
-                let resolver = global
-                    .property_require("__resolvePromise")?
-                    .try_into_function()?;
-
-                // Call the resolver code that sets the result values once
-                // the promise resolves.
-                resolver.call(vec![obj.into_value()])?;
-
-                loop {
-                    let flag = unsafe {
-                        let wrapper_mut = self as *const Self as *mut Self;
-                        let ctx_mut = &mut (*wrapper_mut).context;
-                        q::JS_ExecutePendingJob(self.runtime, ctx_mut)
-                    };
-                    if flag < 0 {
-                        let e = self.get_exception().unwrap_or_else(|| {
-                            ExecutionError::Exception("Unknown exception".into())
-                        });
-                        return Err(e);
-                    }
-
-                    // Check if promise is finished.
-                    let res_val = global.property_require("__promiseResult")?;
-                    if res_val.is_bool() {
-                        let ok = res_val.to_bool()?;
-                        let value = global.property_require("__promiseValue")?;
-
-                        if ok {
-                            return self.resolve_value(value);
-                        } else {
-                            let err_msg = value.js_to_string()?;
-                            return Err(ExecutionError::Exception(JsValue::String(err_msg)));
-                        }
-                    }
-                }
-            } else {
-                Ok(obj.into_value())
-            }
+            Ok(obj.into_value())
         } else {
             Ok(value)
         }
     }
 
     /// Evaluate javascript code.
-    pub fn eval<'a>(&'a self, code: &str) -> Result<OwnedJsValue<'a>, ExecutionError> {
+    pub fn eval<'a>(&'a self, code: &str, eval_type: u32) -> Result<OwnedJsValue<'a>, ExecutionError> {
         let filename = "script.js";
         let filename_c = make_cstring(filename)?;
         let code_c = make_cstring(code)?;
@@ -602,7 +576,7 @@ impl ContextWrapper {
                 code_c.as_ptr(),
                 code.len() as _,
                 filename_c.as_ptr(),
-                q::JS_EVAL_TYPE_GLOBAL as i32,
+                eval_type as i32,
             )
         };
         let value = OwnedJsValue::new(self, value_raw);
@@ -734,4 +708,34 @@ impl ContextWrapper {
         global.set_property(name, cfunc.into_value())?;
         Ok(())
     }
+
+    /// return Ok(false) if no job pending, Ok(true) if a job was executed successfully.
+    pub fn execute_pending_job(&self) -> Result<bool, ExecutionError> {
+        let mut job_ctx = null_mut();
+        let flag = unsafe {
+            q::JS_ExecutePendingJob(self.runtime, &mut job_ctx)
+        };
+        if flag < 0 {
+            //FIXME should get exception from job_ctx
+            let e = self.get_exception().unwrap_or_else(|| {
+                ExecutionError::Exception("Unknown exception".into())
+            });
+            return Err(e);
+        }
+        Ok(flag != 0)
+    }
+
+    pub fn execute_module(&self, module_name: &str) -> Result<(), ExecutionError> {
+        if let Some(ml) = self.module_loader {
+            unsafe {
+                let loader = &*ml;
+                let module = loader.load(module_name).map_err(|e| ExecutionError::Internal(format!("Fail to load module:{}", e)))?;
+                self.eval(&module, JS_EVAL_TYPE_MODULE)?;
+                Ok(())
+            }
+        } else {
+            Err(ExecutionError::Internal("Module loader is not set".to_string()))
+        }
+    }
+
 }
