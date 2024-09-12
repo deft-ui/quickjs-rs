@@ -8,7 +8,7 @@ index cbabf95..f0625f9 100644
      } else {
 +        ret = BF_ST_OVERFLOW;
          slimb_t bit_pos = a->len * LIMB_BITS - a->expn;
-         v = get_bits(a->tab, a->len, bit_pos); 
+         v = get_bits(a->tab, a->len, bit_pos);
  #if LIMB_BITS == 32
          v |= (uint64_t)get_bits(a->tab, a->len, bit_pos + 32) << 32;
  #endif
@@ -31,7 +31,7 @@ index 7bb20cb..ad5811c 100644
  {
      bf_t a_s, *a;
 +    int ret;
- 
+
      a = JS_ToBigIntFree(ctx, &a_s, val);
      if (!a) {
          *pres = 0;
@@ -43,5 +43,5 @@ index 7bb20cb..ad5811c 100644
 -    return 0;
 +    return ret;
  }
- 
+
  int JS_ToBigInt64(JSContext *ctx, int64_t *pres, JSValueConst val)

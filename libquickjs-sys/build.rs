@@ -46,23 +46,18 @@ fn main() {
 #[cfg(feature = "bundled")]
 fn main() {
     let embed_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("embed");
+    let quickjs_path = PathBuf::from(env::var("CARGO_MANIFEST_DIR").unwrap()).join("quickjs");
     let out_path = PathBuf::from(env::var("OUT_DIR").unwrap());
 
     let code_dir = out_path.join("quickjs");
     if exists(&code_dir) {
         std::fs::remove_dir_all(&code_dir).unwrap();
     }
-    copy_dir::copy_dir(embed_path.join("quickjs"), &code_dir)
+    copy_dir::copy_dir(&quickjs_path, &code_dir)
         .expect("Could not copy quickjs directory");
 
     #[cfg(feature = "patched")]
     apply_patches(&code_dir);
-
-    std::fs::copy(
-        embed_path.join("static-functions.c"),
-        code_dir.join("static-functions.c"),
-    )
-    .expect("Could not copy static-functions.c");
 
     eprintln!("Compiling quickjs...");
     let quickjs_version =
@@ -75,6 +70,7 @@ fn main() {
                 "libregexp.c",
                 "libunicode.c",
                 "quickjs.c",
+                "quickjs-libc.c",
                 // Custom wrappers.
                 "static-functions.c",
             ]
