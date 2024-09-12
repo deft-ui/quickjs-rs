@@ -1,10 +1,12 @@
 use std::{collections::HashMap, os::raw::c_char};
+use std::os::raw::{c_int, c_void};
+use std::ptr::null_mut;
 
 use libquickjs_sys as q;
 
-use crate::{JsValue, ValueError};
+use crate::{JsValue, RawJSValue, ResourceValue, ValueError};
 
-use super::{droppable_value::DroppableValue, make_cstring};
+use super::{droppable_value::DroppableValue, JsClass, make_cstring, Resource, ResourceObject};
 
 use super::{
     TAG_BOOL, TAG_EXCEPTION, TAG_FLOAT64, TAG_INT, TAG_NULL, TAG_OBJECT, TAG_STRING, TAG_UNDEFINED,
@@ -15,6 +17,7 @@ use {
     super::TAG_BIG_INT,
     crate::value::bigint::{BigInt, BigIntOrI64},
 };
+use libquickjs_sys::{JS_GetClassID, JS_GetOpaque, JS_GetOpaque2, JS_NewClass, JS_NewClassID, JS_NewObjectClass, JS_SetOpaque, JSClassDef, JSRuntime, JSValue};
 
 #[cfg(feature = "chrono")]
 fn js_date_constructor(context: *mut q::JSContext) -> q::JSValue {
@@ -55,7 +58,8 @@ fn js_create_bigint_function(context: *mut q::JSContext) -> q::JSValue {
 }
 
 /// Serialize a Rust value into a quickjs runtime value.
-pub(super) fn serialize_value(
+//TODO pub(super)?
+pub fn serialize_value(
     context: *mut q::JSContext,
     value: JsValue,
 ) -> Result<q::JSValue, ValueError> {
@@ -180,6 +184,14 @@ pub(super) fn serialize_value(
 
             obj
         }
+        JsValue::Raw(raw) => {
+            unsafe {
+                raw.create_js_value()
+            }
+        }
+        JsValue::Resource(raw) => {
+            create_resource(context, raw)
+        }
         #[cfg(feature = "chrono")]
         JsValue::Date(datetime) => {
             let date_constructor = js_date_constructor(context);
@@ -267,6 +279,44 @@ pub(super) fn serialize_value(
     Ok(v)
 }
 
+pub fn create_resource(context: *mut q::JSContext, resource: ResourceValue) -> JSValue {
+    unsafe  {
+        let class_id = Resource::class_id();
+        if class_id.id.get() == 0 {
+            let runtime = q::JS_GetRuntime(context);
+            let mut cls_id = 0;
+            JS_NewClassID(&mut cls_id);
+            class_id.id.set(cls_id);
+            extern fn finalizer(rt: *mut JSRuntime, val: JSValue) {
+                //println!("finalizer calling");
+                unsafe {
+                    let cls_id = JS_GetClassID(val);
+                    let opaque = JS_GetOpaque(val, cls_id) as *mut ResourceObject;
+                    let _ = Box::from_raw(opaque);
+                }
+                //println!("finalizer called");
+            }
+            let cls_def = JSClassDef {
+                class_name: Resource::NAME.as_ptr() as *const std::ffi::c_char,
+                finalizer: Some(finalizer),
+                gc_mark: None,
+                call: None,
+                exotic: null_mut(),
+            };
+            JS_NewClass(runtime, cls_id, &cls_def);
+        }
+
+        let class_id = class_id.id.get();
+        let res = JS_NewObjectClass(context, class_id as c_int);
+        let opaque = Box::into_raw(Box::new(ResourceObject {
+            data: resource,
+        }));
+        JS_SetOpaque(res, opaque as *mut c_void);
+        res
+    }
+
+}
+
 fn deserialize_array(
     context: *mut q::JSContext,
     raw_value: &q::JSValue,
@@ -304,7 +354,7 @@ fn deserialize_array(
     Ok(JsValue::Array(values))
 }
 
-fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Result<JsValue, ValueError> {
+pub fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Result<HashMap<String, JsValue>, ValueError> {
     assert_eq!(obj.tag, TAG_OBJECT);
 
     let mut properties: *mut q::JSPropertyEnum = std::ptr::null_mut();
@@ -366,10 +416,11 @@ fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Result<Js
         map.insert(key, value);
     }
 
-    Ok(JsValue::Object(map))
+    // Ok(JsValue::Object(map))
+    Ok(map)
 }
 
-pub(super) fn deserialize_value(
+pub fn deserialize_value(
     context: *mut q::JSContext,
     value: &q::JSValue,
 ) -> Result<JsValue, ValueError> {
@@ -420,10 +471,29 @@ pub(super) fn deserialize_value(
         }
         // Object.
         TAG_OBJECT => {
+            let is_func = unsafe { q::JS_IsFunction(context, *r)} > 0;
+            if is_func {
+                //TODO remove
+                let raw_js_value = RawJSValue::new(context, value);
+                return Ok(JsValue::Raw(raw_js_value));
+            }
             let is_array = unsafe { q::JS_IsArray(context, *r) } > 0;
             if is_array {
                 deserialize_array(context, r)
             } else {
+                let is_resource = unsafe {
+                    Resource::class_id().id.get() > 0 && q::JS_GetClassID(*r) == Resource::class_id().id.get()
+                };
+                if is_resource {
+                    unsafe {
+                        let cls_id = JS_GetClassID(*value);
+                        let cls_obj = JS_GetOpaque2(context, *value, cls_id) as *mut ResourceObject;
+                        let res = (*cls_obj).data.resource.clone();
+                        return Ok(JsValue::Resource(ResourceValue {
+                            resource: res
+                        }))
+                    }
+                }
                 #[cfg(feature = "chrono")]
                 {
                     use chrono::offset::TimeZone;
@@ -469,8 +539,8 @@ pub(super) fn deserialize_value(
                         unsafe { q::JS_FreeValue(context, date_constructor) };
                     }
                 }
-
-                deserialize_object(context, r)
+                let raw_js_value = RawJSValue::new(context, value);
+                return Ok(JsValue::Raw(raw_js_value));
             }
         }
         // BigInt
