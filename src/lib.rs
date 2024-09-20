@@ -261,15 +261,15 @@ impl Context {
     ///     Ok(JsValue::String("165!".to_string())),
     /// );
     /// ```
-    pub fn eval(&self, code: &str) -> Result<JsValue, ExecutionError> {
-        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_GLOBAL)?;
+    pub fn eval(&self, code: &str, filename: &str) -> Result<JsValue, ExecutionError> {
+        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_GLOBAL, filename)?;
         let value = value_raw.to_value()?;
         Ok(value)
     }
 
     /// Eval as module
-    pub fn eval_module(&self, code: &str) -> Result<JsValue, ExecutionError> {
-        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_MODULE)?;
+    pub fn eval_module(&self, code: &str, filename: &str) -> Result<JsValue, ExecutionError> {
+        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_MODULE, filename)?;
         let value = value_raw.to_value()?;
         Ok(value)
     }
@@ -299,12 +299,12 @@ impl Context {
     ///     20,
     /// );
     /// ```
-    pub fn eval_as<R>(&self, code: &str) -> Result<R, ExecutionError>
+    pub fn eval_as<R>(&self, code: &str, filename: &str) -> Result<R, ExecutionError>
     where
         R: TryFrom<JsValue>,
         R::Error: Into<ValueError>,
     {
-        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_GLOBAL)?;
+        let value_raw = self.wrapper.eval(code, JS_EVAL_TYPE_GLOBAL,filename)?;
         let value = value_raw.to_value()?;
         let ret = R::try_from(value).map_err(|e| e.into())?;
         Ok(ret)

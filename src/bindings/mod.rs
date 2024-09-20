@@ -565,8 +565,7 @@ impl ContextWrapper {
     }
 
     /// Evaluate javascript code.
-    pub fn eval<'a>(&'a self, code: &str, eval_type: u32) -> Result<OwnedJsValue<'a>, ExecutionError> {
-        let filename = "script.js";
+    pub fn eval<'a>(&'a self, code: &str, eval_type: u32, filename: &str) -> Result<OwnedJsValue<'a>, ExecutionError> {
         let filename_c = make_cstring(filename)?;
         let code_c = make_cstring(code)?;
 
@@ -730,7 +729,7 @@ impl ContextWrapper {
             unsafe {
                 let loader = &*ml;
                 let module = loader.load(module_name).map_err(|e| ExecutionError::Internal(format!("Fail to load module:{}", e)))?;
-                self.eval(&module, JS_EVAL_TYPE_MODULE)?;
+                self.eval(&module, JS_EVAL_TYPE_MODULE, module_name)?;
                 Ok(())
             }
         } else {
