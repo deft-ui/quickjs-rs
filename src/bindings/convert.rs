@@ -189,6 +189,11 @@ pub fn serialize_value(
                 raw.create_js_value()
             }
         }
+        JsValue::Exception(raw) => {
+            unsafe {
+                raw.create_js_value()
+            }
+        }
         JsValue::Resource(raw) => {
             create_resource(context, raw)
         }
@@ -285,7 +290,7 @@ pub fn create_resource(context: *mut q::JSContext, resource: ResourceValue) -> J
         if class_id.id.get() == 0 {
             let runtime = q::JS_GetRuntime(context);
             let mut cls_id = 0;
-            JS_NewClassID(&mut cls_id);
+            JS_NewClassID(runtime, &mut cls_id);
             class_id.id.set(cls_id);
             extern fn finalizer(rt: *mut JSRuntime, val: JSValue) {
                 //println!("finalizer calling");
@@ -385,7 +390,7 @@ pub fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Resul
     let mut map = HashMap::new();
     for index in 0..count {
         let prop = unsafe { (*properties).offset(index as isize) };
-        let raw_value = unsafe { q::JS_GetPropertyInternal(context, *obj, (*prop).atom, *obj, 0) };
+        let raw_value = unsafe { q::JS_GetProperty(context, *obj, (*prop).atom) };
         if raw_value.tag == TAG_EXCEPTION {
             return Err(ValueError::Internal("Could not get object property".into()));
         }
@@ -572,9 +577,13 @@ pub fn deserialize_value(
                 }))
             }
         }
-        x => Err(ValueError::Internal(format!(
-            "Unhandled JS_TAG value: {}",
-            x
-        ))),
+        TAG_EXCEPTION => {
+            let raw_js_value = RawJSValue::new(context, value);
+            Ok(JsValue::Exception(raw_js_value))
+        }
+        _ => {
+            let raw_js_value = RawJSValue::new(context, value);
+            return Ok(JsValue::Raw(raw_js_value));
+        }
     }
 }

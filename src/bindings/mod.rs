@@ -7,11 +7,11 @@ pub mod value;
 
 use std::{ffi::CString, os::raw::{c_int, c_void}, sync::Mutex};
 use std::any::Any;
-use std::cell::Cell;
+use std::cell::{Cell};
 use std::ptr::{null_mut};
-
+use std::rc::Rc;
 use libquickjs_sys as q;
-use libquickjs_sys::{JS_EVAL_TYPE_MODULE, js_std_dump_error, js_std_promise_rejection_tracker, JSClassID};
+use libquickjs_sys::{JS_EVAL_TYPE_MODULE, JSClassID};
 
 use crate::{callback::{Arguments, Callback}, console::ConsoleBackend, ContextError, ExecutionError, JsValue, ResourceValue, ValueError};
 
@@ -61,8 +61,12 @@ impl ClassId {
 trait JsClass {
     const NAME: &'static str;
 
-    fn class_id() -> &'static ClassId;
+    fn class_id() -> Rc<ClassId>;
 
+}
+
+thread_local! {
+    static CLASS_ID: Rc<ClassId> = Rc::new(ClassId::new());
 }
 
 struct Resource;
@@ -70,9 +74,8 @@ struct Resource;
 impl JsClass for Resource {
     const NAME: &'static str = "Resource";
 
-    fn class_id() -> &'static ClassId {
-        static MY_CLASS_ID: ClassId = ClassId::new();
-        &MY_CLASS_ID
+    fn class_id() -> Rc<ClassId> {
+        CLASS_ID.with(|c| c.clone())
     }
 }
 
@@ -418,7 +421,7 @@ impl ContextWrapper {
 
         unsafe {
             //TODO remove
-            q::JS_SetHostPromiseRejectionTracker(runtime, Some(js_std_promise_rejection_tracker), null_mut());
+            // q::JS_SetHostPromiseRejectionTracker(runtime, Some(js_std_promise_rejection_tracker), null_mut());
         }
 
         // Initialize the promise resolver helper code.
@@ -550,7 +553,7 @@ impl ContextWrapper {
         if value.is_exception() {
             unsafe {
                 //TODO remove
-                js_std_dump_error(self.context);
+                // js_std_dump_error(self.context);
             }
             let err = self
                 .get_exception()
@@ -727,7 +730,7 @@ impl ContextWrapper {
     pub fn execute_module(&self, module_name: &str) -> Result<(), ExecutionError> {
         if let Some(ml) = self.module_loader {
             unsafe {
-                let loader = &*ml;
+                let loader = &mut *ml;
                 let module = loader.load(module_name).map_err(|e| ExecutionError::Internal(format!("Fail to load module:{}", e)))?;
                 self.eval(&module, JS_EVAL_TYPE_MODULE, module_name)?;
                 Ok(())

@@ -21,10 +21,10 @@ pub enum JsTag {
     #[cfg(feature = "bigint")]
     BigInt = q::JS_TAG_BIG_INT,
     Float64 = q::JS_TAG_FLOAT64,
-    BigFloat = q::JS_TAG_BIG_FLOAT,
+    // BigFloat = q::JS_TAG_BIG_FLOAT,
     Exception = q::JS_TAG_EXCEPTION,
     Undefined = q::JS_TAG_UNDEFINED,
-    BigDecimal = q::JS_TAG_BIG_DECIMAL,
+    // BigDecimal = q::JS_TAG_BIG_DECIMAL,
     CatchOffset = q::JS_TAG_CATCH_OFFSET,
     Uninitialized = q::JS_TAG_UNINITIALIZED,
     FunctionBytecode = q::JS_TAG_FUNCTION_BYTECODE,
@@ -33,7 +33,7 @@ pub enum JsTag {
 impl JsTag {
     #[inline]
     pub(super) fn from_c(value: &q::JSValue) -> JsTag {
-        let inner = unsafe { q::JS_ValueGetTag(*value) };
+        let inner = unsafe { q::JS_VALUE_GET_TAG(*value) };
         match inner {
             q::JS_TAG_INT => JsTag::Int,
             q::JS_TAG_BOOL => JsTag::Bool,
@@ -43,10 +43,10 @@ impl JsTag {
             q::JS_TAG_STRING => JsTag::String,
             q::JS_TAG_SYMBOL => JsTag::Symbol,
             q::JS_TAG_FLOAT64 => JsTag::Float64,
-            q::JS_TAG_BIG_FLOAT => JsTag::BigFloat,
+            // q::JS_TAG_BIG_FLOAT => JsTag::BigFloat,
             q::JS_TAG_EXCEPTION => JsTag::Exception,
             q::JS_TAG_UNDEFINED => JsTag::Undefined,
-            q::JS_TAG_BIG_DECIMAL => JsTag::BigDecimal,
+            // q::JS_TAG_BIG_DECIMAL => JsTag::BigDecimal,
             q::JS_TAG_CATCH_OFFSET => JsTag::CatchOffset,
             q::JS_TAG_UNINITIALIZED => JsTag::Uninitialized,
             q::JS_TAG_FUNCTION_BYTECODE => JsTag::FunctionBytecode,
@@ -70,10 +70,10 @@ impl JsTag {
             JsTag::String => q::JS_TAG_STRING,
             JsTag::Symbol => q::JS_TAG_SYMBOL,
             JsTag::Float64 => q::JS_TAG_FLOAT64,
-            JsTag::BigFloat => q::JS_TAG_BIG_FLOAT,
+            // JsTag::BigFloat => q::JS_TAG_BIG_FLOAT,
             JsTag::Exception => q::JS_TAG_EXCEPTION,
             JsTag::Undefined => q::JS_TAG_UNDEFINED,
-            JsTag::BigDecimal => q::JS_TAG_BIG_DECIMAL,
+            // JsTag::BigDecimal => q::JS_TAG_BIG_DECIMAL,
             JsTag::CatchOffset => q::JS_TAG_CATCH_OFFSET,
             JsTag::Uninitialized => q::JS_TAG_UNINITIALIZED,
             JsTag::FunctionBytecode => q::JS_TAG_FUNCTION_BYTECODE,
@@ -149,17 +149,17 @@ impl JsTag {
         matches!(self, Self::Float64)
     }
 
-    /// Returns `true` if the js_tag is [`BigFloat`].
-    #[inline]
-    pub fn is_big_float(&self) -> bool {
-        matches!(self, Self::BigFloat)
-    }
+    ///// Returns `true` if the js_tag is [`BigFloat`].
+    // #[inline]
+    // pub fn is_big_float(&self) -> bool {
+    //     matches!(self, Self::BigFloat)
+    // }
 
-    /// Returns `true` if the js_tag is [`BigDecimal`].
-    #[inline]
-    pub fn is_big_decimal(&self) -> bool {
-        matches!(self, Self::BigDecimal)
-    }
+    // /// Returns `true` if the js_tag is [`BigDecimal`].
+    // #[inline]
+    // pub fn is_big_decimal(&self) -> bool {
+    //     matches!(self, Self::BigDecimal)
+    // }
 }
 
 pub struct OwnedJsAtom<'a> {

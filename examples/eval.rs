@@ -1,5 +1,6 @@
-use quick_js::console::{ConsoleBackend, Level};
-use quick_js::{Context, JsValue};
+use std::time::Instant;
+use deft_quick_js::console::{ConsoleBackend, Level};
+use deft_quick_js::{Context, JsValue};
 
 pub struct Console {
 
@@ -19,9 +20,11 @@ impl ConsoleBackend for Console {
 }
 
 pub fn main() {
+    let start_time = Instant::now();
     let context = Context::builder().console(Console::new()).build().unwrap();
 
-    let value = context.eval("() => 123").unwrap();
+    let value = context.eval("() => 123", "test.js").unwrap();
+    println!("init time: {}ms", start_time.elapsed().as_millis());
     println!("function result {:?}", value.call_as_function(Vec::new()).unwrap());
 
     let r = context.call_js_function(value, Vec::<JsValue>::new()).unwrap();
@@ -36,6 +39,7 @@ pub fn main() {
        var x = myCallback(10, 20);
        x;
 "#,
+            "test.js"
         )
         .unwrap();
     println!("js: callback = {:?}", value);

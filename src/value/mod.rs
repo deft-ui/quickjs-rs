@@ -104,6 +104,7 @@ pub enum JsValue {
     Object(HashMap<String, JsValue>),
     Resource(ResourceValue),
     Raw(RawJSValue),
+    Exception(RawJSValue),
     /// chrono::Datetime<Utc> / JS Date integration.
     /// Only available with the optional `chrono` feature.
     #[cfg(feature = "chrono")]
