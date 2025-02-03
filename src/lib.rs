@@ -44,6 +44,7 @@ mod value;
 #[cfg(test)]
 mod tests;
 pub mod loader;
+pub mod exception;
 
 use std::{convert::TryFrom, error, fmt};
 use std::any::Any;
@@ -56,6 +57,7 @@ pub use self::{
 };
 
 pub use libquickjs_sys;
+use crate::exception::HostPromiseRejectionTracker;
 
 /// Error on Javascript execution.
 #[derive(Debug)]
@@ -425,6 +427,10 @@ impl Context {
     /// Execute module
     pub fn execute_module(&self, module_name: &str) -> Result<(), ExecutionError> {
         self.wrapper.execute_module(module_name)
+    }
+
+    pub fn set_promise_rejection_tracker<F: HostPromiseRejectionTracker + 'static>(&mut self, tracker: F) {
+        self.wrapper.set_host_promise_rejection_tracker(tracker);
     }
 
 }

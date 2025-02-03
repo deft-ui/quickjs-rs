@@ -11,13 +11,15 @@ use std::cell::{Cell};
 use std::ptr::{null_mut};
 use std::rc::Rc;
 use libquickjs_sys as q;
-use libquickjs_sys::{JS_EVAL_TYPE_MODULE, JSClassID};
+use libquickjs_sys::{JS_EVAL_TYPE_MODULE, JSClassID, JSContext, JSValue};
 
 use crate::{callback::{Arguments, Callback}, console::ConsoleBackend, ContextError, ExecutionError, JsValue, ResourceValue, ValueError};
 
 use value::{JsFunction, OwnedJsObject};
 
 pub use value::{JsCompiledFunction, OwnedJsValue};
+use crate::bindings::convert::deserialize_value;
+use crate::exception::{HostPromiseRejectionTracker, HostPromiseRejectionTrackerWrapper};
 use crate::loader::{quickjs_rs_module_loader, JsModuleLoader};
 
 // JS_TAG_* constants from quickjs.
@@ -33,6 +35,22 @@ const TAG_NULL: i64 = 2;
 const TAG_UNDEFINED: i64 = 3;
 pub const TAG_EXCEPTION: i64 = 6;
 const TAG_FLOAT64: i64 = 7;
+
+extern "C" fn host_promise_rejection_tracker(
+    ctx: *mut JSContext,
+    promise: JSValue,
+    reason: JSValue,
+    is_handled: ::std::os::raw::c_int,
+    opaque: *mut ::std::os::raw::c_void,
+) {
+    let promise =  deserialize_value(ctx, &promise).unwrap();
+    let reason = deserialize_value(ctx, &reason).unwrap();
+    let is_handled = is_handled != 0;
+    let mut opaque = opaque as *mut HostPromiseRejectionTrackerWrapper;
+    unsafe {
+        (*opaque).tracker.track_promise_rejection(promise, reason, is_handled);
+    }
+}
 
 /// Helper for creating CStrings.
 pub fn make_cstring(value: impl Into<Vec<u8>>) -> Result<CString, ValueError> {
@@ -380,11 +398,17 @@ pub struct ContextWrapper {
     // A Mutex is used over a RefCell because it needs to be unwind-safe.
     callbacks: Mutex<Vec<(Box<WrappedCallback>, Box<q::JSValue>)>>,
     module_loader: Option<*mut Box<dyn JsModuleLoader>>,
+    host_promise_rejection_tracker_wrapper: Option<*mut HostPromiseRejectionTrackerWrapper>,
 }
 
 impl Drop for ContextWrapper {
     fn drop(&mut self) {
         unsafe {
+            {
+                if let Some(p) = self.host_promise_rejection_tracker_wrapper {
+                    let _ = Box::from_raw(p);
+                }
+            }
             q::JS_FreeContext(self.context);
             q::JS_FreeRuntime(self.runtime);
         }
@@ -419,11 +443,6 @@ impl ContextWrapper {
             return Err(ContextError::ContextCreationFailed);
         }
 
-        unsafe {
-            //TODO remove
-            // q::JS_SetHostPromiseRejectionTracker(runtime, Some(js_std_promise_rejection_tracker), null_mut());
-        }
-
         // Initialize the promise resolver helper code.
         // This code is needed by Self::resolve_value
         let wrapper = Self {
@@ -431,9 +450,19 @@ impl ContextWrapper {
             context,
             callbacks: Mutex::new(Vec::new()),
             module_loader: None,
+            host_promise_rejection_tracker_wrapper: None,
         };
 
         Ok(wrapper)
+    }
+
+    pub fn set_host_promise_rejection_tracker<F: HostPromiseRejectionTracker + 'static>(&mut self, tracker: F) {
+        let tracker = HostPromiseRejectionTrackerWrapper::new(Box::new(tracker));
+        let ptr = Box::into_raw(Box::new(tracker));
+        self.host_promise_rejection_tracker_wrapper = Some(ptr);
+        unsafe {
+            q::JS_SetHostPromiseRejectionTracker(self.runtime, Some(host_promise_rejection_tracker), ptr as _);
+        }
     }
 
     pub fn set_module_loader(&mut self, module_loader: Box<dyn JsModuleLoader>) {
