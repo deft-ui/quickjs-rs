@@ -10,6 +10,7 @@ use std::any::Any;
 use std::cell::{Cell};
 use std::ptr::{null_mut};
 use std::rc::Rc;
+use anyhow::Context;
 use libquickjs_sys as q;
 use libquickjs_sys::{JS_EVAL_TYPE_MODULE, JSClassID, JSContext, JSValue};
 
@@ -663,14 +664,23 @@ impl ContextWrapper {
         let result = std::panic::catch_unwind(|| {
             let arg_slice = unsafe { std::slice::from_raw_parts(argv, argc as usize) };
 
-            let args = arg_slice
-                .iter()
-                .map(|raw| convert::deserialize_value(context, raw))
-                .collect::<Result<Vec<_>, _>>()?;
+            let mut args = Vec::with_capacity(arg_slice.len());
+            for a in arg_slice {
+                let a = deserialize_value(context, a)
+                    .map_err(|e| {
+                        ExecutionError::Internal(
+                            format!("failed to deserialize arguments {} (zero-based) to JS value, {}", args.len(), e)
+                        )
+                    })?;
+                args.push(a);
+            }
 
             match callback.call(args) {
                 Ok(Ok(result)) => {
-                    let serialized = convert::serialize_value(context, result)?;
+                    let serialized = convert::serialize_value(context, result)
+                        .map_err(|e| {
+                            ExecutionError::Internal(format!("failed to serialize rust value to js value, {}", e))
+                        })?;
                     Ok(serialized)
                 }
                 // TODO: better error reporting.
@@ -688,11 +698,13 @@ impl ContextWrapper {
     /// Add a global JS function that is backed by a Rust function or closure.
     pub fn create_callback<'a, F>(
         &'a self,
+        name: &str,
         callback: impl Callback<F> + 'static,
     ) -> Result<JsFunction<'a>, ExecutionError> {
         let argcount = callback.argument_count() as i32;
 
         let context = self.context;
+        let name = name.to_string();
         let wrapper = move |argc: c_int, argv: *mut q::JSValue| -> q::JSValue {
             match Self::exec_callback(context, argc, argv, &callback) {
                 Ok(value) => value,
@@ -700,7 +712,7 @@ impl ContextWrapper {
                 Err(e) => {
                     let js_exception_value = match e {
                         ExecutionError::Exception(e) => e,
-                        other => other.to_string().into(),
+                        other => format!("Failed to call [{}], {}", &name,  other.to_string()).into(),
                     };
                     let js_exception =
                         convert::serialize_value(context, js_exception_value).unwrap();
@@ -734,7 +746,7 @@ impl ContextWrapper {
         name: &str,
         callback: impl Callback<F> + 'static,
     ) -> Result<(), ExecutionError> {
-        let cfunc = self.create_callback(callback)?;
+        let cfunc = self.create_callback(name, callback)?;
         let global = self.global()?;
         global.set_property(name, cfunc.into_value())?;
         Ok(())
