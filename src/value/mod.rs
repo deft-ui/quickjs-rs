@@ -289,6 +289,7 @@ pub struct JsPromise {
     context: *mut JSContext,
     func: Vec<JSValue>,
     raw_js_value: RawJSValue,
+    settled: bool,
 }
 
 impl JsPromise {
@@ -311,28 +312,39 @@ impl JsPromise {
             func,
             raw_js_value,
             context: context.wrapper.context,
+            settled: false,
         }
     }
 
     /// Resolve the promise
     pub fn resolve(&mut self, value: JsValue) {
+        if !self.mark_settled() {
+            return;
+        }
         unsafe {
             let undef = crate::bindings::convert::serialize_value(self.context, JsValue::Undefined).unwrap();
             let mut val = crate::bindings::convert::serialize_value(self.context, value).unwrap();
             let res = JS_Call(self.context, self.func[0], undef, 1, &mut val as *mut JSValue);
             JS_FreeValue(self.context, val);
             JS_FreeValue(self.context, res);
+            JS_FreeValue(self.context, self.func[0]);
+            JS_FreeValue(self.context, self.func[1]);
         }
     }
 
     /// Reject the promise
     pub fn reject(&mut self, value: JsValue) {
+        if !self.mark_settled() {
+            return;
+        }
         unsafe {
             let undef = crate::bindings::convert::serialize_value(self.context, JsValue::Undefined).unwrap();
             let mut val = crate::bindings::convert::serialize_value(self.context, value).unwrap();
             let res = JS_Call(self.context, self.func[1], undef, 1, &mut val as *mut JSValue);
             JS_FreeValue(self.context, val);
             JS_FreeValue(self.context, res);
+            JS_FreeValue(self.context, self.func[0]);
+            JS_FreeValue(self.context, self.func[1]);
         }
     }
 
@@ -342,6 +354,15 @@ impl JsPromise {
     pub fn js_value(&self) -> JsValue {
         JsValue::Raw(self.raw_js_value.clone())
         //self.value.clone()
+    }
+
+    fn mark_settled(&mut self) -> bool {
+        if !self.settled {
+            self.settled = true;
+            true
+        } else {
+            false
+        }
     }
 
 }
