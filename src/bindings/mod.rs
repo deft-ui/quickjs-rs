@@ -41,12 +41,11 @@ extern "C" fn host_promise_rejection_tracker(
     ctx: *mut JSContext,
     promise: JSValue,
     reason: JSValue,
-    is_handled: ::std::os::raw::c_int,
+    is_handled: bool,
     opaque: *mut ::std::os::raw::c_void,
 ) {
     let promise =  deserialize_value(ctx, &promise).unwrap();
     let reason = deserialize_value(ctx, &reason).unwrap();
-    let is_handled = is_handled != 0;
     let mut opaque = opaque as *mut HostPromiseRejectionTrackerWrapper;
     unsafe {
         (*opaque).tracker.track_promise_rejection(promise, reason, is_handled);

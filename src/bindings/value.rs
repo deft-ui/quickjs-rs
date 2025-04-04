@@ -279,7 +279,7 @@ impl<'a> OwnedJsValue<'a> {
     /// Check if this value is a Javascript function.
     #[inline]
     pub fn is_function(&self) -> bool {
-        unsafe { q::JS_IsFunction(self.context.context, self.value) == 1 }
+        unsafe { q::JS_IsFunction(self.context.context, self.value) }
     }
 
     /// Check if this value is a Javascript module.

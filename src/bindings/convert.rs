@@ -454,7 +454,7 @@ pub fn deserialize_value(
         }
         // String.
         TAG_STRING => {
-            let ptr = unsafe { q::JS_ToCStringLen2(context, std::ptr::null_mut(), *r, 0) };
+            let ptr = unsafe { q::JS_ToCStringLen2(context, std::ptr::null_mut(), *r, false) };
 
             if ptr.is_null() {
                 return Err(ValueError::Internal(
@@ -476,7 +476,7 @@ pub fn deserialize_value(
         }
         // Object.
         TAG_OBJECT => {
-            let is_func = unsafe { q::JS_IsFunction(context, *r)} > 0;
+            let is_func = unsafe { q::JS_IsFunction(context, *r)};
             if is_func {
                 //TODO remove
                 let raw_js_value = RawJSValue::new(context, value);

@@ -144,6 +144,9 @@ impl JsValue {
                     q::JS_PROP_C_W_E as i32,
                 )
             };
+            unsafe {
+                q::JS_FreeValue(context, qvalue);
+            }
             if ret < 0 {
                 // Free the object if a property failed.
                 unsafe {
