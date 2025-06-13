@@ -519,10 +519,7 @@ impl<'a> JsFunction<'a> {
             q::JS_Call(
                 self.value.context.context,
                 self.value.value,
-                q::JSValue {
-                    u: q::JSValueUnion { int32: 0 },
-                    tag: JsTag::Null as i64,
-                },
+                q::JS_NULL,
                 qargs.len() as i32,
                 qargs.as_mut_ptr(),
             )

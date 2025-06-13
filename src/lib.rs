@@ -10,7 +10,7 @@
 //! ## Quickstart:
 //!
 //! ```rust
-//! use quick_js::{Context, JsValue};
+//! use deft_quick_js::{Context, JsValue};
 //!
 //! let context = Context::new().unwrap();
 //!
@@ -211,7 +211,7 @@ impl Context {
     /// For details, see the methods on `ContextBuilder`.
     ///
     /// ```rust
-    /// let _context = quick_js::Context::builder()
+    /// let _context = deft_quick_js::Context::builder()
     ///     .memory_limit(100_000)
     ///     .build()
     ///     .unwrap();
@@ -243,7 +243,7 @@ impl Context {
     /// promise failed.
     ///
     /// ```rust
-    /// use quick_js::{Context, JsValue};
+    /// use deft_quick_js::{Context, JsValue};
     /// let context = Context::new().unwrap();
     ///
     /// let value = context.eval(" 1 + 2 + 3 ");
@@ -286,7 +286,7 @@ impl Context {
     /// promise failed.
     ///
     /// ```rust
-    /// use quick_js::{Context};
+    /// use deft_quick_js::{Context};
     /// let context = Context::new().unwrap();
     ///
     /// let res = context.eval_as::<bool>(" 100 > 10 ");
@@ -315,7 +315,7 @@ impl Context {
     /// Set a global variable.
     ///
     /// ```rust
-    /// use quick_js::{Context, JsValue};
+    /// use deft_quick_js::{Context, JsValue};
     /// let context = Context::new().unwrap();
     ///
     /// context.set_global("someGlobalVariable", 42).unwrap();
@@ -344,7 +344,7 @@ impl Context {
     /// promise failed.
     ///
     /// ```rust
-    /// use quick_js::{Context, JsValue};
+    /// use deft_quick_js::{Context, JsValue};
     /// let context = Context::new().unwrap();
     ///
     /// let res = context.call_function("encodeURIComponent", vec!["a=b"]);
@@ -398,7 +398,7 @@ impl Context {
     ///     if Err(e) is returned, a Javascript exception will be raised
     ///
     /// ```rust
-    /// use quick_js::{Context, JsValue};
+    /// use deft_quick_js::{Context, JsValue};
     /// let context = Context::new().unwrap();
     ///
     /// // Register a closue as a callback under the "add" name.

@@ -120,7 +120,7 @@ pub enum JsValue {
 impl JsValue {
     pub fn create_object(context: *mut JSContext, map: HashMap<String, JsValue>) -> Result<Self, ValueError> {
         let obj = unsafe { q::JS_NewObject(context) };
-        if obj.tag == TAG_EXCEPTION {
+        if q::JS_IsException(obj) {
             return Err(ValueError::Internal("Could not create object".into()));
         }
 
@@ -224,10 +224,7 @@ impl JsValue {
                 JS_Call(
                     raw.ctx,
                     *raw.js_value,
-                    JSValue {
-                        u: libquickjs_sys::JSValueUnion { int32: 0 },
-                        tag: JsTag::Null as i64,
-                    },
+                    q::JS_NULL,
                     qargs.len() as i32,
                     qargs.as_mut_ptr(),
                 )

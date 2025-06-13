@@ -7,7 +7,7 @@ use std::os::raw::c_int;
 use std::path::PathBuf;
 use std::ptr::null_mut;
 use std::str::FromStr;
-use libquickjs_sys::{JS_Eval, JS_EVAL_FLAG_COMPILE_ONLY, JS_EVAL_TYPE_MODULE, JS_FreeValue, JS_IsException, JSContext, JSModuleDef, size_t};
+use libquickjs_sys::{JS_Eval, JS_EVAL_FLAG_COMPILE_ONLY, JS_EVAL_TYPE_MODULE, JS_FreeValue, JS_IsException, JSContext, JSModuleDef, size_t, JS_VALUE_GET_PTR};
 
 /// js module loader callback
 pub unsafe extern "C" fn quickjs_rs_module_loader(
@@ -38,7 +38,7 @@ pub unsafe extern "C" fn quickjs_rs_module_loader(
         // return Err(anyhow!("Failed to load module"));
     }
     // js_module_set_import_meta(ctx, func_val, true as c_int, false as c_int);
-    let ptr = func_val.u.ptr;
+    let ptr = JS_VALUE_GET_PTR(func_val);
     JS_FreeValue(ctx, func_val);
     ptr as *mut JSModuleDef
 }

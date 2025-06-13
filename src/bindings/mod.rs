@@ -12,7 +12,7 @@ use std::ptr::{null_mut};
 use std::rc::Rc;
 use anyhow::Context;
 use libquickjs_sys as q;
-use libquickjs_sys::{JS_EVAL_TYPE_MODULE, JSClassID, JSContext, JSValue};
+use libquickjs_sys::{JS_EVAL_TYPE_MODULE, JSClassID, JSContext, JSValue, JS_VALUE_GET_PTR};
 
 use crate::{callback::{Arguments, Callback}, console::ConsoleBackend, ContextError, ExecutionError, JsValue, ResourceValue, ValueError};
 
@@ -123,19 +123,16 @@ where
     where
         F: Fn(c_int, *mut q::JSValue) -> q::JSValue,
     {
-        let closure_ptr = (*data).u.ptr;
+        let closure_ptr = JS_VALUE_GET_PTR(*data);
         let closure: &mut F = &mut *(closure_ptr as *mut F);
         (*closure)(argc, argv)
     }
 
     let boxed_f = Box::new(closure);
 
-    let data = Box::new(q::JSValue {
-        u: q::JSValueUnion {
-            ptr: (&*boxed_f) as *const F as *mut c_void,
-        },
-        tag: TAG_NULL,
-    });
+    let data = Box::new(
+        q::JS_MKPTR(q::JS_TAG_NULL, (&*boxed_f) as *const F as *mut c_void)
+    );
 
     ((boxed_f, data), Some(trampoline::<F>))
 }
@@ -163,18 +160,21 @@ impl<'a> Clone for OwnedValueRef<'a> {
 
 impl<'a> std::fmt::Debug for OwnedValueRef<'a> {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        match self.value.tag {
-            TAG_EXCEPTION => write!(f, "Exception(?)"),
-            TAG_NULL => write!(f, "NULL"),
-            TAG_UNDEFINED => write!(f, "UNDEFINED"),
-            TAG_BOOL => write!(f, "Bool(?)",),
-            TAG_INT => write!(f, "Int(?)"),
-            TAG_FLOAT64 => write!(f, "Float(?)"),
-            TAG_STRING => write!(f, "String(?)"),
-            TAG_OBJECT => write!(f, "Object(?)"),
-            TAG_FUNCTION_BYTECODE => write!(f, "Bytecode(?)"),
-            _ => write!(f, "?"),
+        unsafe {
+            match q::JS_VALUE_GET_TAG(self.value) {
+                q::JS_TAG_EXCEPTION => write!(f, "Exception(?)"),
+                q::JS_TAG_NULL => write!(f, "NULL"),
+                q::JS_TAG_UNDEFINED => write!(f, "UNDEFINED"),
+                q::JS_TAG_BOOL => write!(f, "Bool(?)",),
+                q::JS_TAG_INT => write!(f, "Int(?)"),
+                q::JS_TAG_FLOAT64 => write!(f, "Float(?)"),
+                q::JS_TAG_STRING => write!(f, "String(?)"),
+                q::JS_TAG_OBJECT => write!(f, "Object(?)"),
+                q::JS_TAG_FUNCTION_BYTECODE => write!(f, "Bytecode(?)"),
+                _ => write!(f, "?"),
+            }
         }
+
     }
 }
 
@@ -210,27 +210,27 @@ impl<'a> OwnedValueRef<'a> {
     }
 
     pub fn is_null(&self) -> bool {
-        self.value.tag == TAG_NULL
+        q::JS_IsNull(self.value)
     }
 
     pub fn is_bool(&self) -> bool {
-        self.value.tag == TAG_BOOL
+        q::JS_IsBool(self.value)
     }
 
     pub fn is_exception(&self) -> bool {
-        self.value.tag == TAG_EXCEPTION
+        q::JS_IsException(self.value)
     }
 
     pub fn is_object(&self) -> bool {
-        self.value.tag == TAG_OBJECT
+        q::JS_IsObject(self.value)
     }
 
     pub fn is_string(&self) -> bool {
-        self.value.tag == TAG_STRING
+        q::JS_IsString(self.value)
     }
 
     pub fn is_compiled_function(&self) -> bool {
-        self.value.tag == TAG_FUNCTION_BYTECODE
+        q::JS_VALUE_GET_TAG(self.value) == q::JS_TAG_FUNCTION_BYTECODE
     }
 
     pub fn to_string(&self) -> Result<String, ExecutionError> {
@@ -240,7 +240,7 @@ impl<'a> OwnedValueRef<'a> {
             let raw = unsafe { q::JS_ToString(self.context.context, self.value) };
             let value = OwnedValueRef::new(self.context, raw);
 
-            if value.value.tag != TAG_STRING {
+            if !value.is_string() {
                 return Err(ExecutionError::Exception(
                     "Could not convert value to string".into(),
                 ));
@@ -264,10 +264,10 @@ impl<'a> OwnedValueRef<'a> {
 
     #[cfg(test)]
     pub fn get_ref_count(&self) -> i32 {
-        if self.value.tag < 0 {
+        if q::JS_VALUE_GET_TAG(self.value) < 0 {
             // This transmute is OK since if tag < 0, the union will be a refcount
             // pointer.
-            let ptr = unsafe { self.value.u.ptr as *mut q::JSRefCountHeader };
+            let ptr = unsafe { q::JS_VALUE_GET_PTR(self.value) as *mut q::JSRefCountHeader };
             let pref: &mut q::JSRefCountHeader = &mut unsafe { *ptr };
             pref.ref_count
         } else {
@@ -284,7 +284,7 @@ pub struct OwnedObjectRef<'a> {
 
 impl<'a> OwnedObjectRef<'a> {
     pub fn new(value: OwnedValueRef<'a>) -> Result<Self, ValueError> {
-        if value.value.tag != TAG_OBJECT {
+        if !value.is_object() {
             Err(ValueError::Internal("Expected an object".into()))
         } else {
             Ok(Self { value })
@@ -301,11 +301,13 @@ impl<'a> OwnedObjectRef<'a> {
         let raw = unsafe {
             q::JS_GetPropertyStr(self.value.context.context, self.value.value, cname.as_ptr())
         };
-        let t = raw.tag;
+        let t = unsafe {
+            q::JS_VALUE_GET_TAG(raw)
+        };
         unsafe {
             q::JS_FreeValue(self.value.context.context, raw);
         }
-        Ok(t)
+        Ok(t as i64)
     }
 
     /// Determine if the object is a promise by checking the presence of
@@ -324,12 +326,12 @@ impl<'a> OwnedObjectRef<'a> {
             q::JS_GetPropertyStr(self.value.context.context, self.value.value, cname.as_ptr())
         };
 
-        if raw.tag == TAG_EXCEPTION {
+        if q::JS_IsException(raw) {
             Err(ExecutionError::Internal(format!(
                 "Exception while getting property '{}'",
                 name
             )))
-        } else if raw.tag == TAG_UNDEFINED {
+        } else if q::JS_IsUndefined(raw) {
             Err(ExecutionError::Internal(format!(
                 "Property '{}' not found",
                 name
@@ -719,10 +721,7 @@ impl ContextWrapper {
                         q::JS_Throw(context, js_exception);
                     }
 
-                    q::JSValue {
-                        u: q::JSValueUnion { int32: 0 },
-                        tag: TAG_EXCEPTION,
-                    }
+                    q::JS_MKVAL(q::JS_TAG_EXCEPTION, 0)
                 }
             }
         };

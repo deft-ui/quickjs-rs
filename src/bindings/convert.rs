@@ -17,12 +17,12 @@ use {
     super::TAG_BIG_INT,
     crate::value::bigint::{BigInt, BigIntOrI64},
 };
-use libquickjs_sys::{JS_GetClassID, JS_GetOpaque, JS_GetOpaque2, JS_NewClass, JS_NewClassID, JS_NewObjectClass, JS_SetOpaque, JSClassDef, JSRuntime, JSValue};
+use libquickjs_sys::{JS_GetClassID, JS_GetOpaque, JS_GetOpaque2, JS_NewClass, JS_NewClassID, JS_NewObjectClass, JS_SetOpaque, JSClassDef, JSRuntime, JSValue, JS_VALUE_GET_TAG};
 
 #[cfg(feature = "chrono")]
 fn js_date_constructor(context: *mut q::JSContext) -> q::JSValue {
     let global = unsafe { q::JS_GetGlobalObject(context) };
-    assert_eq!(global.tag, TAG_OBJECT);
+    assert!(q::JS_IsObject(global));
 
     let date_constructor = unsafe {
         q::JS_GetPropertyStr(
@@ -33,7 +33,7 @@ fn js_date_constructor(context: *mut q::JSContext) -> q::JSValue {
                 .as_ptr(),
         )
     };
-    assert_eq!(date_constructor.tag, TAG_OBJECT);
+    assert!(q::JS_IsObject(date_constructor));
     unsafe { q::JS_FreeValue(context, global) };
     date_constructor
 }
@@ -64,34 +64,17 @@ pub fn serialize_value(
     value: JsValue,
 ) -> Result<q::JSValue, ValueError> {
     let v = match value {
-        JsValue::Undefined => q::JSValue {
-            u: q::JSValueUnion { int32: 0 },
-            tag: TAG_UNDEFINED,
-        },
-        JsValue::Null => q::JSValue {
-            u: q::JSValueUnion { int32: 0 },
-            tag: TAG_NULL,
-        },
-        JsValue::Bool(flag) => q::JSValue {
-            u: q::JSValueUnion {
-                int32: if flag { 1 } else { 0 },
-            },
-            tag: TAG_BOOL,
-        },
-        JsValue::Int(val) => q::JSValue {
-            u: q::JSValueUnion { int32: val },
-            tag: TAG_INT,
-        },
-        JsValue::Float(val) => q::JSValue {
-            u: q::JSValueUnion { float64: val },
-            tag: TAG_FLOAT64,
-        },
+        JsValue::Undefined => q::JS_UNDEFINED,
+        JsValue::Null => q::JS_NULL,
+        JsValue::Bool(flag) => q::JS_MKVAL(q::JS_TAG_BOOL, if flag { 1 } else { 0 }),
+        JsValue::Int(val) => q::JS_MKVAL(q::JS_TAG_INT, val),
+        JsValue::Float(val) => q::__JS_NewFloat64(val),
         JsValue::String(val) => {
             let qval = unsafe {
                 q::JS_NewStringLen(context, val.as_ptr() as *const c_char, val.len() as _)
             };
 
-            if qval.tag == TAG_EXCEPTION {
+            if q::JS_IsException(qval) {
                 return Err(ValueError::Internal(
                     "Could not create string in runtime".into(),
                 ));
@@ -102,7 +85,7 @@ pub fn serialize_value(
         JsValue::Array(values) => {
             // Allocate a new array in the runtime.
             let arr = unsafe { q::JS_NewArray(context) };
-            if arr.tag == TAG_EXCEPTION {
+            if q::JS_IsException(arr) {
                 return Err(ValueError::Internal(
                     "Could not create array in runtime".into(),
                 ));
@@ -147,7 +130,7 @@ pub fn serialize_value(
         }
         JsValue::Object(map) => {
             let obj = unsafe { q::JS_NewObject(context) };
-            if obj.tag == TAG_EXCEPTION {
+            if q::JS_IsException(obj) {
                 return Err(ValueError::Internal("Could not create object".into()));
             }
 
@@ -203,10 +186,7 @@ pub fn serialize_value(
 
             let f = datetime.timestamp_millis() as f64;
 
-            let timestamp = q::JSValue {
-                u: q::JSValueUnion { float64: f },
-                tag: TAG_FLOAT64,
-            };
+            let timestamp = q::JS_NewFloat64(f);
 
             let mut args = vec![timestamp];
 
@@ -222,7 +202,7 @@ pub fn serialize_value(
                 q::JS_FreeValue(context, date_constructor);
             }
 
-            if value.tag != TAG_OBJECT {
+            if !q::JS_IsObject(value) {
                 return Err(ValueError::Internal(
                     "Could not construct Date object".into(),
                 ));
@@ -326,7 +306,7 @@ fn deserialize_array(
     context: *mut q::JSContext,
     raw_value: &q::JSValue,
 ) -> Result<JsValue, ValueError> {
-    assert_eq!(raw_value.tag, TAG_OBJECT);
+    assert!(q::JS_IsObject(*raw_value));
 
     let length_name = make_cstring("length")?;
 
@@ -346,7 +326,7 @@ fn deserialize_array(
     let mut values = Vec::new();
     for index in 0..(len as usize) {
         let value_raw = unsafe { q::JS_GetPropertyUint32(context, *raw_value, index as u32) };
-        if value_raw.tag == TAG_EXCEPTION {
+        if q::JS_IsException(value_raw) {
             return Err(ValueError::Internal("Could not build array".into()));
         }
         let value_res = deserialize_value(context, &value_raw);
@@ -360,7 +340,7 @@ fn deserialize_array(
 }
 
 pub fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Result<HashMap<String, JsValue>, ValueError> {
-    assert_eq!(obj.tag, TAG_OBJECT);
+    assert_eq!(JS_VALUE_GET_TAG(*obj), q::JS_TAG_OBJECT);
 
     let mut properties: *mut q::JSPropertyEnum = std::ptr::null_mut();
     let mut count: u32 = 0;
@@ -391,7 +371,7 @@ pub fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Resul
     for index in 0..count {
         let prop = unsafe { (*properties).offset(index as isize) };
         let raw_value = unsafe { q::JS_GetProperty(context, *obj, (*prop).atom) };
-        if raw_value.tag == TAG_EXCEPTION {
+        if q::JS_IsException(raw_value) {
             return Err(ValueError::Internal("Could not get object property".into()));
         }
 
@@ -402,7 +382,7 @@ pub fn deserialize_object(context: *mut q::JSContext, obj: &q::JSValue) -> Resul
         let value = value_res?;
 
         let key_value = unsafe { q::JS_AtomToString(context, (*prop).atom) };
-        if key_value.tag == TAG_EXCEPTION {
+        if q::JS_IsException(key_value) {
             return Err(ValueError::Internal(
                 "Could not get object property name".into(),
             ));
@@ -431,29 +411,28 @@ pub fn deserialize_value(
 ) -> Result<JsValue, ValueError> {
     let r = value;
 
-    match r.tag {
+    match q::JS_VALUE_GET_TAG(*r) {
         // Int.
-        TAG_INT => {
-            let val = unsafe { r.u.int32 };
+        q::JS_TAG_INT => {
+            let val = unsafe { q::JS_VALUE_GET_INT(*r) };
             Ok(JsValue::Int(val))
         }
         // Bool.
-        TAG_BOOL => {
-            let raw = unsafe { r.u.int32 };
-            let val = raw > 0;
+        q::JS_TAG_BOOL => {
+            let val = unsafe { q::JS_VALUE_GET_BOOL(*r) };
             Ok(JsValue::Bool(val))
         }
         // Null.
-        TAG_NULL => Ok(JsValue::Null),
+        q::JS_TAG_NULL => Ok(JsValue::Null),
         // Undefined.
-        TAG_UNDEFINED => Ok(JsValue::Undefined),
+        q::JS_TAG_UNDEFINED => Ok(JsValue::Undefined),
         // Float.
-        TAG_FLOAT64 => {
-            let val = unsafe { r.u.float64 };
+        q::JS_TAG_FLOAT64 => {
+            let val = unsafe { q::JS_VALUE_GET_FLOAT64(*r) };
             Ok(JsValue::Float(val))
         }
         // String.
-        TAG_STRING => {
+        q::JS_TAG_STRING => {
             let ptr = unsafe { q::JS_ToCStringLen2(context, std::ptr::null_mut(), *r, false) };
 
             if ptr.is_null() {
@@ -475,7 +454,7 @@ pub fn deserialize_value(
             Ok(JsValue::String(s))
         }
         // Object.
-        TAG_OBJECT => {
+        q::JS_TAG_OBJECT => {
             let is_func = unsafe { q::JS_IsFunction(context, *r)};
             if is_func {
                 //TODO remove
@@ -516,7 +495,7 @@ pub fn deserialize_value(
                                     .as_ptr(),
                             )
                         };
-                        assert_eq!(getter.tag, TAG_OBJECT);
+                        assert_eq!(q::JS_VALUE_GET_TAG(getter), q::JS_TAG_OBJECT);
 
                         let timestamp_raw =
                             unsafe { q::JS_Call(context, getter, *r, 0, std::ptr::null_mut()) };
@@ -526,12 +505,12 @@ pub fn deserialize_value(
                             q::JS_FreeValue(context, date_constructor);
                         };
 
-                        let res = if timestamp_raw.tag == TAG_FLOAT64 {
-                            let f = unsafe { timestamp_raw.u.float64 } as i64;
+                        let res = if q::JS_IsFloat64(timestamp_raw) {
+                            let f = unsafe { q::JS_VALUE_GET_FLOAT64(timestamp_raw) } as i64;
                             let datetime = chrono::Utc.timestamp_millis(f);
                             Ok(JsValue::Date(datetime))
-                        } else if timestamp_raw.tag == TAG_INT {
-                            let f = unsafe { timestamp_raw.u.int32 } as i64;
+                        } else if q::JS_IsInt(timestamp_raw) {
+                            let f = unsafe { q::JS_VALUE_GET_INT(timestamp_raw) } as i64;
                             let datetime = chrono::Utc.timestamp_millis(f);
                             Ok(JsValue::Date(datetime))
                         } else {
@@ -577,7 +556,7 @@ pub fn deserialize_value(
                 }))
             }
         }
-        TAG_EXCEPTION => {
+        q::JS_TAG_EXCEPTION => {
             let raw_js_value = RawJSValue::new(context, value);
             Ok(JsValue::Exception(raw_js_value))
         }
