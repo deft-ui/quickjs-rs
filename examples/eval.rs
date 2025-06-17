@@ -43,4 +43,11 @@ pub fn main() {
         )
         .unwrap();
     println!("js: callback = {:?}", value);
+
+    context.add_callback("testNan", |v: JsValue| {
+        println!("received value: {}", v.value_type());
+        0
+    })
+        .unwrap();
+    context.eval("testNan(Number.NaN)", "test_nan.js").unwrap();
 }

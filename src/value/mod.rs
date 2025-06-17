@@ -164,6 +164,27 @@ impl JsValue {
         }))
     }
 
+    pub fn value_type(&self) -> &'static str {
+        match self {
+            JsValue::Undefined => "undefined",
+            JsValue::Null => "null",
+            JsValue::Bool(_) => "boolean",
+            JsValue::Int(_) => "int",
+            JsValue::Float(_) => "float",
+            JsValue::String(_) => "string",
+            JsValue::Array(_) => "array",
+            JsValue::Object(_) => "object",
+            JsValue::Resource(_) => "resource",
+            JsValue::Raw(_) => "raw",
+            JsValue::Exception(_) => "exception",
+            #[cfg(feature = "chrono")]
+            JsValue::Date(_) => "date",
+            #[cfg(feature = "bigint")]
+            JsValue::BigInt(_) => "bigint",
+            JsValue::__NonExhaustive => "unknown",
+        }
+    }
+
     /// Cast value to a str.
     ///
     /// Returns `Some(&str)` if value is a `JsValue::String`, None otherwise.

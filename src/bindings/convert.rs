@@ -560,9 +560,16 @@ pub fn deserialize_value(
             let raw_js_value = RawJSValue::new(context, value);
             Ok(JsValue::Exception(raw_js_value))
         }
-        _ => {
-            let raw_js_value = RawJSValue::new(context, value);
-            return Ok(JsValue::Raw(raw_js_value));
+        t => {
+            if q::JS_IsFloat64(*value) {
+                Ok(JsValue::Float(unsafe {
+                    q::JS_VALUE_GET_FLOAT64(*value)
+                }))
+            } else {
+                // println!("unknown tag: {}", t);
+                let raw_js_value = RawJSValue::new(context, value);
+                Ok(JsValue::Raw(raw_js_value))
+            }
         }
     }
 }
